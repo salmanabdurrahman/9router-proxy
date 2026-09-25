@@ -26,6 +26,23 @@ This relay solves that issue by:
 - **Lossless Header Sanitization**: Strips internal hop-by-hop headers, Cloudflare/Vercel tracking headers, and forward IPs without breaking provider authorization.
 - **Manual Redirect Handling**: Upstream redirects are never automatically followed, preventing credential leakage across origins.
 
+## Region Selection Strategy: Singapore (`sin1`) vs US (`iad1`)
+
+The edge relay's execution region is controlled in `vercel.json` and `api/index.ts`:
+
+| Region                                     | Latency from Indonesia              | Google Antigravity / Gemini Posture                 | Recommended For                           |
+| :----------------------------------------- | :---------------------------------- | :-------------------------------------------------- | :---------------------------------------- |
+| **Singapore (`sin1`)** _(Current default)_ | **~15–30 ms** (Ultra-fast TTFB)     | Supported; occasional datacenter IP false-positives | Everyday coding, instant token generation |
+| **US Washington D.C. (`iad1`)**            | **~180–220 ms** (Trans-Pacific RTT) | Tier-1 Home Region; 100% immune to region errors    | Fallback if `FAILED_PRECONDITION` occurs  |
+
+### Switching Regions
+
+To switch between regions:
+
+1. In `vercel.json`: Change `"regions": ["sin1"]` to `"regions": ["iad1"]` (or vice-versa).
+2. In `api/index.ts`: Update `regions: ["sin1"]`.
+3. Commit and push: Vercel automatically deploys the updated edge location within seconds.
+
 ## Deployment Guide
 
 ### Option 1: Deploy to Vercel (Recommended for Google Antigravity)
