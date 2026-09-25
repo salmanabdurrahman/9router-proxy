@@ -29,6 +29,23 @@ export function buildTargetUrl(target: string | null, relayPath: string | null):
     throw new Error("Only HTTPS port 443 is allowed");
   }
 
+  // Reject private network, loopback, or cloud metadata targets (anti-SSRF)
+  const host = parsedTarget.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+  ) {
+    throw new Error("Private and loopback network targets are prohibited");
+  }
+
   // Reject embedded credentials (e.g. https://user:pass@example.com)
   if (parsedTarget.username || parsedTarget.password) {
     throw new Error("Target credentials are not allowed");

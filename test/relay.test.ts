@@ -71,6 +71,24 @@ describe("Target URL Validation & Anti-SSRF (buildTargetUrl)", () => {
     );
   });
 
+  it("rejects private and loopback IP addresses (anti-SSRF)", () => {
+    expect(() => buildTargetUrl("https://127.0.0.1", "/")).toThrow(
+      "Private and loopback network targets are prohibited",
+    );
+    expect(() => buildTargetUrl("https://localhost", "/")).toThrow(
+      "Private and loopback network targets are prohibited",
+    );
+    expect(() => buildTargetUrl("https://169.254.169.254", "/")).toThrow(
+      "Private and loopback network targets are prohibited",
+    );
+    expect(() => buildTargetUrl("https://10.0.0.1", "/")).toThrow(
+      "Private and loopback network targets are prohibited",
+    );
+    expect(() => buildTargetUrl("https://192.168.1.1", "/")).toThrow(
+      "Private and loopback network targets are prohibited",
+    );
+  });
+
   it("rejects embedded credentials", () => {
     expect(() => buildTargetUrl("https://user:pass@api.openai.com", "/v1/models")).toThrow(
       "Target credentials are not allowed",
