@@ -54,8 +54,13 @@ export async function handleRequest(request: Request, env?: Env): Promise<Respon
 
   const requestUrl = new URL(request.url);
 
-  // 3. Health check endpoint (requires authentication)
-  if (requestUrl.pathname === "/health") {
+  // 3. Health check & status endpoint (when no upstream target header is supplied)
+  const isStatusPath =
+    requestUrl.pathname === "/health" ||
+    requestUrl.pathname === "/" ||
+    requestUrl.pathname === "/api";
+
+  if (isStatusPath && !request.headers.get(TARGET_HEADER)) {
     return jsonResponse({
       status: "ok",
       service: "9router-relay",
