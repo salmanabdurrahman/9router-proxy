@@ -1,0 +1,17 @@
+{
+  "name": "9router-proxy",
+  "version": "1.0.0",
+  "description": "High-performance, secure Edge relay for 9Router with region locking and anti-SSRF protections",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "test": "bun test",
+    "deploy:vercel": "vercel deploy --prod",
+    "deploy:cf": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
