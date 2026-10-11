@@ -12,6 +12,7 @@
     "deploy:cf": "wrangler deploy"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "wrangler": "^4.149.0"
   }
 }

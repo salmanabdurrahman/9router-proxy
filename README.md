@@ -1,121 +1,157 @@
 # 9Router Edge Relay
 
-High-performance, secure Edge relay for **9Router** with region locking, anti-SSRF protection, constant-time authentication, and Server-Sent Events (SSE) streaming support.
+High-performance, secure Edge relay for **9Router** with dual deployment support (**Cloudflare Workers** and **Vercel Edge**), region locking, anti-SSRF protection, constant-time authentication, and Server-Sent Events (SSE) streaming support.
 
 ## Why this relay exists
 
-When calling upstream AI providers (such as Google Gemini, Google Antigravity, Anthropic Claude, or OpenAI), users from certain regions may encounter geographic or network blocks (e.g. `FAILED_PRECONDITION: User location is not supported for the API use`).
+When integrating upstream AI providers (such as Google Gemini, Google Antigravity, Anthropic Claude, or OpenAI), two primary edge challenges frequently arise:
 
-Using standard Cloudflare Workers can sometimes trigger this error because Cloudflare's Anycast network frequently routes traffic from Southeast Asia through **Hong Kong (HKG)** or **Taiwan**, which Google Gemini blocks entirely.
+1. **Geographic Routing & Provider Geoblocking**:
+   Certain AI models enforce strict geographic filtering (`FAILED_PRECONDITION: User location is not supported for the API use`). Default Anycast routing from Southeast Asia may traverse unapproved transit points (such as Hong Kong or Taiwan), triggering instant blocks even if the user's home country is supported.
+   - **Solution**: Pin egress execution explicitly to supported regions: **Singapore** (~15–30 ms from SE Asia / Indonesia) or **US** (~180–220 ms trans-Pacific fallback).
 
-This relay solves that issue by:
+2. **Payload Size Constraints (Screenshots & Vision)**:
+   Modern LLM workflows frequently send high-resolution screenshots or multi-image payloads as base64 data.
+   - **Vercel Edge / Serverless**: Imposes a hard **4.5 MB** incoming request body limit. Requests exceeding 4.5 MB are rejected with HTTP 413 (`FUNCTION_PAYLOAD_TOO_LARGE`).
+   - **Cloudflare Workers**: Supports up to **100 MB** request bodies across Free and Paid accounts, eliminating payload bottlenecks for multimodal workflows.
 
-1. Running on **Vercel Edge** with region locking explicitly pinned to **`iad1` (Washington D.C., USA)** or **`sin1` (Singapore)**.
-2. Losslessly forwarding headers (`Authorization`, `x-api-key`, etc.) while stripping proxy and edge metadata to prevent provider leakage.
-3. Enforcing constant-time secret comparison and strict URL validation to prevent open relay and SSRF attacks.
-4. Preserving real-time streaming tokens (`duplex: "half"` with raw SSE chunk pass-through).
+This relay provides a unified codebase (`src/index.ts`) compatible with both runtimes, losslessly proxying SSE streams while isolating sensitive tokens and blocking SSRF.
+
+## Platform Comparison: Cloudflare Workers vs. Vercel Edge
+
+| Feature / Dimension          | Cloudflare Workers                          | Vercel Edge                                      |
+| :--------------------------- | :------------------------------------------ | :----------------------------------------------- |
+| **Max Request Body**         | **100 MB** (Ideal for screenshots & vision) | **4.5 MB** (Sufficient for text & code)          |
+| **Region Pinning**           | Placement Hints (`[placement]`)             | Edge Function Regions (`regions: [...]`)         |
+| **Default Region (SE Asia)** | `aws:ap-southeast-1` (Singapore, ~15–30 ms) | `sin1` (Singapore, ~15–30 ms)                    |
+| **Fallback Region (US)**     | `aws:us-east-1` (US East, ~180–220 ms)      | `iad1` (Washington D.C., ~180–220 ms)            |
+| **SSE Streaming**            | Native (`duplex: "half"`)                   | Native (`duplex: "half"`)                        |
+| **Primary Use Case**         | Vision models, heavy payloads, multimodal   | Lightweight text/code chat, Vercel-native stacks |
 
 ## Security Features
 
 - **Mandatory Authentication**: Rejects any request missing `x-relay-secret` header or `?key=` query parameter.
-- **Constant-Time Comparison**: Protects against timing attacks when validating the secret.
+- **Constant-Time Comparison**: Protects against timing attacks when validating the secret (`safeEqual`).
 - **Minimum Secret Length**: Enforces secrets of at least 16 characters.
 - **Anti-SSRF & Protocol Enforcement**:
-  - Restricts targets strictly to `https://` on standard port `443`.
+  - Restricts upstream targets strictly to `https://` on standard port `443`.
   - Prohibits embedded credentials, sub-path smuggling in target origins, backslashes, fragments, and protocol-relative tricks (`//evil.com`).
-- **Lossless Header Sanitization**: Strips internal hop-by-hop headers, Cloudflare/Vercel tracking headers, and forward IPs without breaking provider authorization.
+  - Blocks private IP ranges, loopback (`127.0.0.1`), and link-local addresses.
+- **Lossless Header Sanitization**: Strips hop-by-hop headers, runtime-specific tracing headers, and forwarding IPs while preserving provider authorization headers (`authorization`, etc.).
 - **Manual Redirect Handling**: Upstream redirects are never automatically followed, preventing credential leakage across origins.
 
-## Region Selection Strategy: Singapore (`sin1`) vs US (`iad1`)
+## Deployment & Configuration
 
-The edge relay's execution region is controlled in `vercel.json` and `api/index.ts`:
+### Option A: Cloudflare Workers (Recommended for Large Screenshots)
 
-| Region                                     | Latency from Indonesia              | Google Antigravity / Gemini Posture                 | Recommended For                           |
-| :----------------------------------------- | :---------------------------------- | :-------------------------------------------------- | :---------------------------------------- |
-| **Singapore (`sin1`)** _(Current default)_ | **~15–30 ms** (Ultra-fast TTFB)     | Supported; occasional datacenter IP false-positives | Everyday coding, instant token generation |
-| **US Washington D.C. (`iad1`)**            | **~180–220 ms** (Trans-Pacific RTT) | Tier-1 Home Region; 100% immune to region errors    | Fallback if `FAILED_PRECONDITION` occurs  |
+Cloudflare Workers handles requests up to 100 MB and uses Placement Hints to steer execution close to the specified cloud region.
 
-### Switching Regions
+#### 1. Region Configuration (`wrangler.toml`)
 
-To switch between regions:
+- **Default (Singapore)**:
+  ```toml
+  [placement]
+  mode = "targeted"
+  region = "aws:ap-southeast-1"
+  ```
+- **Fallback (US East)** (switch if Google ever reports location unsupported):
+  ```toml
+  [placement]
+  mode = "targeted"
+  region = "aws:us-east-1"
+  ```
 
-1. In `vercel.json`: Change `"regions": ["sin1"]` to `"regions": ["iad1"]` (or vice-versa).
-2. In `api/index.ts`: Update `regions: ["sin1"]`.
-3. Commit and push: Vercel automatically deploys the updated edge location within seconds.
+#### 2. Set Secret in Cloudflare
 
-## Deployment Guide
+```bash
+npx wrangler secret put RELAY_SECRET
+```
 
-### Option 1: Deploy to Vercel (Recommended for Google Antigravity)
+_Enter a random secret with at least 16 characters (e.g. generated via `openssl rand -hex 24`)._
 
-Vercel Hobby plan is 100% free and allows pinning your edge function region to the US (`iad1`).
+#### 3. Deploy
 
-1. **Install Vercel CLI (or connect via GitHub)**:
+```bash
+npm run deploy:cf
+```
 
-   ```bash
-   npm i -g vercel
-   ```
+#### 4. Live Log Inspection
 
-2. **Deploy project**:
+```bash
+npx wrangler tail
+```
 
-   ```bash
-   cd ~/Development/9router-proxy
-   vercel
-   ```
+### Option B: Vercel Edge (Alternative for Standard Payloads <= 4.5 MB)
 
-3. **Set Environment Variable in Vercel**:
-   - Go to your Vercel Project Dashboard → **Settings** → **Environment Variables**.
-   - Add key: `RELAY_SECRET`
-   - Value: Generate a strong random key (e.g. `openssl rand -hex 24`).
-   - Scope: Production, Preview, Development.
+Vercel Edge provides free hosting with native region pinning in Singapore (`sin1`) or Washington D.C. (`iad1`).
 
-4. **IMPORTANT — Disable Deployment Protection**:
-   - In Vercel Project Dashboard → **Settings** → **Deployment Protection**.
-   - Ensure **Vercel Authentication** is set to **Disabled** (otherwise Vercel returns HTTP 403 Access Denied to 9Router requests).
+#### 1. Region Configuration (`vercel.json` & `api/index.ts`)
 
-5. **Deploy to Production**:
-   ```bash
-   vercel --prod
-   ```
+- **Default (Singapore)**:
+  - In `vercel.json`: `"regions": ["sin1"]`
+  - In `api/index.ts`: `regions: ["sin1"]`
+- **Fallback (US Washington D.C.)**:
+  - In `vercel.json`: `"regions": ["iad1"]`
+  - In `api/index.ts`: `regions: ["iad1"]`
 
-### Option 2: Deploy to Cloudflare Workers (Alternative)
+#### 2. Deploy & Setup via Vercel CLI
 
-If you prefer Cloudflare Workers:
+```bash
+# 1. Login and link project
+npx vercel
 
-1. **Set Secret**:
+# 2. Set Environment Variable in Vercel Dashboard (or via CLI)
+# Key: RELAY_SECRET (min 16 chars)
+# Scope: Production, Preview, Development
+npx vercel env add RELAY_SECRET
 
-   ```bash
-   wrangler secret put RELAY_SECRET
-   ```
+# 3. IMPORTANT: Disable Deployment Protection
+# In Vercel Project Dashboard → Settings → Deployment Protection:
+# Set 'Vercel Authentication' to Disabled (prevents HTTP 403 on relay calls)
 
-   Enter your secret key when prompted.
-
-2. **Deploy**:
-   ```bash
-   npm run deploy:cf
-   ```
+# 4. Deploy to Production
+npm run deploy:vercel
+```
 
 ## Configuring in 9Router
 
 1. Open your **9Router Dashboard** (`http://localhost:20128`).
 2. Navigate to **Proxy Pools** (or Provider Connection Settings).
 3. Add a new Relay endpoint:
-   - **Relay URL**: `https://your-relay-domain.vercel.app`
+   - **Relay URL**:
+     - Cloudflare: `https://9router-relay.<your-subdomain>.workers.dev` (or your custom domain)
+     - Vercel: `https://<your-project>.vercel.app` (or your custom domain)
    - **Secret Header**: `x-relay-secret: <YOUR_RELAY_SECRET>` (or append `?key=<YOUR_RELAY_SECRET>` to the URL).
-4. Save and test the connection.
+4. Save and test the upstream connection.
 
 ## Verification & Health Check
 
-Test that your deployed relay is operational and properly protected:
+Verify that the relay is active and enforcing security:
+
+### Cloudflare Workers Endpoint
 
 ```bash
-# 1. Unauthenticated request (Expected: 401 Unauthorized)
-curl -i https://your-relay-domain.vercel.app/health
+# 1. Unauthenticated check (Expected: 401 Unauthorized)
+curl -i https://9router-relay.<your-subdomain>.workers.dev/health
 
-# 2. Authenticated health check (Expected: 200 OK)
-curl -i -H "x-relay-secret: YOUR_SECRET_HERE" https://your-relay-domain.vercel.app/health
+# 2. Authenticated health check via header (Expected: 200 OK)
+curl -i -H "x-relay-secret: YOUR_SECRET_HERE" https://9router-relay.<your-subdomain>.workers.dev/health
 
-# 3. Via query parameter (Expected: 200 OK)
-curl -i "https://your-relay-domain.vercel.app/health?key=YOUR_SECRET_HERE"
+# 3. Authenticated health check via query param (Expected: 200 OK)
+curl -i "https://9router-relay.<your-subdomain>.workers.dev/health?key=YOUR_SECRET_HERE"
+```
+
+### Vercel Edge Endpoint
+
+```bash
+# 1. Unauthenticated check (Expected: 401 Unauthorized)
+curl -i https://<your-project>.vercel.app/health
+
+# 2. Authenticated health check via header (Expected: 200 OK)
+curl -i -H "x-relay-secret: YOUR_SECRET_HERE" https://<your-project>.vercel.app/health
+
+# 3. Authenticated health check via query param (Expected: 200 OK)
+curl -i "https://<your-project>.vercel.app/health?key=YOUR_SECRET_HERE"
 ```
 
 ## Local Development & Testing
@@ -126,10 +162,10 @@ Run automated tests:
 bun test
 ```
 
-Start local relay server:
+Start local relay development server:
 
 ```bash
 RELAY_SECRET=test-secret-at-least-16-chars bun run dev
 ```
 
-Server starts on `http://localhost:8787`.
+Server listens on `http://localhost:8787`.

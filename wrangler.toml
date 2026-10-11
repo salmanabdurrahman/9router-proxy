@@ -2,6 +2,12 @@ name = "9router-relay"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 
-# Note: Cloudflare free workers may route traffic from SE Asia through Hong Kong (HKG),
-# which is geoblocked by Google Gemini/Antigravity.
-# For Google Antigravity, deploying to Vercel (region: iad1) is recommended.
+# Placement Hints: Steer Worker execution to data center closest to target cloud region.
+# Solves standard Anycast routing through Hong Kong (HKG) that triggers Google geoblocking,
+# while supporting large request payloads (up to 100 MB) for screenshot-heavy prompts.
+#
+# Default: Singapore ("aws:ap-southeast-1") for low latency from Indonesia / SE Asia (~15-30ms).
+# Fallback: US East ("aws:us-east-1") if Google Antigravity / Gemini ever triggers geoblock.
+[placement]
+mode = "targeted"
+region = "aws:ap-southeast-1"
